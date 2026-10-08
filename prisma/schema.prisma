@@ -1,0 +1,809 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Admin
+model AdminUser {
+  id               Int       @id @default(autoincrement())
+  email            String    @unique
+  passwordHash     String
+  role             AdminRole @default(EDITOR)
+  lastLogin        DateTime?
+  resetTokenHash   String?
+  resetTokenExpiry DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([email])
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  EDITOR
+}
+
+// Settings
+model SiteSettings {
+  id                Int      @id @default(autoincrement())
+  logo              String?
+  primaryColor      String   @default("#1F2937")
+  secondaryColor    String   @default("#3B82F6")
+  address           String?
+  phone             String?
+  email             String?
+  socialLinks       Json     @default("{}")
+  orgRegistrationNo String?
+  trust12A          String?
+  trust80G          String?
+  footerTagline     String?
+  tipPercentOptions Json     @default("[10, 14, 16]")
+  presetAmounts     Json     @default("[1000, 5000, 10000]")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// Footer link lists (Quick Links / Get Involved) — admin-managed, plain String
+// section instead of an enum so new sections can be added without a migration
+model FooterLink {
+  id        Int      @id @default(autoincrement())
+  section   String
+  label     String
+  url       String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([section, order])
+}
+
+// SEO
+model SEOMeta {
+  id          Int      @id @default(autoincrement())
+  page        String   @unique
+  title       String
+  description String
+  keywords    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([page])
+}
+
+// Homepage Hero
+model HeroSlide {
+  id        Int      @id @default(autoincrement())
+  image     String
+  headline  String
+  subtext   String?
+  ctaText   String?
+  ctaLink   String?
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Initiatives
+model Initiative {
+  id            Int               @id @default(autoincrement())
+  title         String
+  slug          String            @unique
+  shortDesc     String
+  fullDesc      String
+  coverImage    String
+  featureImage  String?
+  keyFeatures   Json              @default("[]")
+  keyActivities Json              @default("[]")
+  howItWorks    Json              @default("[]")
+  impactNumbers Json              @default("[]")
+  impactPoints  Json              @default("[]")
+  order         Int               @default(0)
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  photos        InitiativePhoto[]
+  videos        InitiativeVideo[]
+  campLocations CampLocation[]
+
+  @@index([isActive, order])
+  @@index([slug])
+}
+
+model InitiativeVideo {
+  id           Int        @id @default(autoincrement())
+  initiativeId Int
+  initiative   Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  title        String
+  youtubeUrl   String
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@index([initiativeId])
+}
+
+model InitiativePhoto {
+  id           Int        @id @default(autoincrement())
+  initiativeId Int
+  initiative   Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  image        String
+  caption      String?
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@index([initiativeId])
+}
+
+// Campaigns
+model Campaign {
+  id            Int               @id @default(autoincrement())
+  title         String
+  slug          String            @unique
+  summary       String
+  story         String
+  coverImage    String
+  goalAmount    Float             @default(0)
+  raisedAmount  Float             @default(0)
+  costBreakdown Json              @default("[]")
+  presetAmounts     Json? // nullable override; falls back to SiteSettings.presetAmounts when unset
+  tipPercentOptions Json? // nullable override; falls back to SiteSettings.tipPercentOptions when unset
+  status        CampaignStatus    @default(ACTIVE)
+  videoUrl      String?
+  startDate     DateTime?
+  endDate       DateTime?
+  categoryId    Int?
+  category      CampaignCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  order         Int               @default(0)
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  photos        CampaignPhoto[]
+  videos        CampaignVideo[]
+  products      CampaignProduct[]
+  donations     Donation[]
+  project       CampaignProject?
+  updates       CampaignUpdate[]
+
+  @@index([isActive, order])
+  @@index([slug])
+  @@index([status])
+  @@index([categoryId])
+}
+
+enum CampaignStatus {
+  ACTIVE
+  COMPLETED
+}
+
+// Admin-managed so categories can be added/renamed without a code deploy.
+model CampaignCategory {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  slug      String     @unique
+  order     Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  campaigns Campaign[]
+
+  @@index([order])
+}
+
+model CampaignPhoto {
+  id         Int      @id @default(autoincrement())
+  campaignId Int
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  image      String
+  caption    String?
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId])
+}
+
+model CampaignVideo {
+  id         Int      @id @default(autoincrement())
+  campaignId Int
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  videoUrl   String
+  title      String?
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId])
+}
+
+model CampaignProduct {
+  id            Int            @id @default(autoincrement())
+  campaignId    Int
+  campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  name          String
+  image         String
+  pricePerUnit  Float
+  availableQty  Int            @default(0)
+  order         Int            @default(0)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  donationItems DonationItem[]
+
+  @@index([campaignId])
+  @@index([isActive])
+}
+
+// One-to-one with Campaign — a single video/description/image-set bundle shown on
+// the campaign's "project" section. Distinct from CampaignVideo[]/CampaignPhoto[],
+// which are separate many-relations with their own admin UI (currently unmanaged).
+model CampaignProject {
+  id          Int      @id @default(autoincrement())
+  campaignId  Int      @unique
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  description String
+  videoUrl    String?
+  images      Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Many-to-one with Campaign — a feed of dated updates/news posts about a specific
+// campaign's progress, distinct from the general-purpose Update model.
+model CampaignUpdate {
+  id          Int       @id @default(autoincrement())
+  campaignId  Int
+  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  title       String
+  description String
+  images      Json      @default("[]")
+  isPublished Boolean   @default(true)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([campaignId])
+}
+
+// Updates/Blog
+model Update {
+  id          Int      @id @default(autoincrement())
+  title       String
+  slug        String   @unique
+  category    String
+  coverImage  String
+  content     String
+  publishedAt DateTime @default(now())
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([slug])
+  @@index([category])
+}
+
+// Team
+model TeamMember {
+  id          Int          @id @default(autoincrement())
+  name        String
+  photo       String
+  designation String
+  category    TeamCategory
+  education   String?
+  experience  String?
+  linkedinUrl String?
+  order       Int          @default(0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([isActive, order])
+  @@index([category])
+}
+
+enum TeamCategory {
+  TRUSTEE
+  CORE_TEAM
+  VOLUNTEER
+}
+
+// Gallery
+model GalleryAlbum {
+  id         Int            @id @default(autoincrement())
+  title      String
+  coverImage String
+  eventDate  DateTime?
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  photos     GalleryPhoto[]
+
+  @@index([isActive, eventDate])
+}
+
+model GalleryPhoto {
+  id        Int          @id @default(autoincrement())
+  albumId   Int
+  album     GalleryAlbum @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  image     String
+  caption   String?
+  order     Int          @default(0)
+  createdAt DateTime     @default(now())
+
+  @@index([albumId])
+}
+
+model GalleryVideo {
+  id         Int      @id @default(autoincrement())
+  title      String
+  youtubeUrl String
+  thumbnail  String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isActive, createdAt])
+}
+
+// Testimonials
+model Testimonial {
+  id          Int      @id @default(autoincrement())
+  name        String
+  designation String?
+  photo       String?
+  quote       String
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Homepage mission-quote carousel (the rotating quote shown over the flood-rescue
+// photo on the homepage)
+model Quote {
+  id        Int      @id @default(autoincrement())
+  text      String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Homepage "Where We Make An Impact" map pins (the presence badges + map markers
+// shown over the Karnataka map). left/top are CSS percentage strings (e.g. "78%")
+// positioning the pin over the map image.
+model PresenceLocation {
+  id        Int      @id @default(autoincrement())
+  name      String
+  left      String
+  top       String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// About Us page "Our Core Values" cards (title + description tiles)
+model CoreValue {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Impact Counters
+model ImpactCounter {
+  id        Int      @id @default(autoincrement())
+  label     String
+  number    Int
+  icon      String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+// Partners
+model Partner {
+  id         Int      @id @default(autoincrement())
+  name       String
+  logo       String
+  websiteUrl String?
+  order      Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Donations
+model Donation {
+  id                  Int            @id @default(autoincrement())
+  donorName           String
+  email               String
+  phone               String?
+  address             String?
+  pan                 String?
+  amount              Float
+  tipAmount           Float          @default(0)
+  mode                DonationMode   @default(CASH)
+  donationType        DonationType   @default(ONE_TIME)
+  campaignId          Int?
+  campaign            Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  paymentMethod       String
+  paymentStatus       PaymentStatus  @default(PENDING)
+  razorpayOrderId     String? // set when the Razorpay order is created; used to match incoming webhooks
+  transactionId       String? // holds the Razorpay payment_id once captured
+  receiptNumber       String?
+  receiptPdfUrl       String?
+  is80GEligible       Boolean        @default(false)
+  emailStatus         EmailStatus    @default(PENDING) // donor receipt email
+  adminNotifiedStatus EmailStatus    @default(PENDING) // internal admin notification email
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  items               DonationItem[]
+
+  @@index([email])
+  @@index([paymentStatus])
+  @@index([campaignId])
+  @@index([createdAt])
+  @@index([emailStatus])
+  @@index([adminNotifiedStatus])
+  @@index([razorpayOrderId])
+}
+
+enum DonationMode {
+  CASH
+  PRODUCTS
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model DonationItem {
+  id                Int             @id @default(autoincrement())
+  donationId        Int
+  donation          Donation        @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  campaignProductId Int
+  campaignProduct   CampaignProduct @relation(fields: [campaignProductId], references: [id], onDelete: Restrict)
+  quantity          Int
+  priceAtTime       Float
+  createdAt         DateTime        @default(now())
+
+  @@index([donationId])
+  @@index([campaignProductId])
+}
+
+enum DonationType {
+  ONE_TIME
+  MONTHLY
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// Volunteer Applications
+model VolunteerApplication {
+  id             Int               @id @default(autoincrement())
+  fullName       String
+  email          String
+  phone          String
+  city           String?
+  age            Int?
+  occupation     String?
+  skills         String?
+  areaOfInterest String?
+  availability   String?
+  message        String?
+  status         ApplicationStatus @default(NEW)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Contact Messages
+model ContactMessage {
+  id        Int           @id @default(autoincrement())
+  name      String
+  email     String
+  phone     String?
+  subject   String
+  message   String
+  status    MessageStatus @default(NEW)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PartnerApplication {
+  id              Int               @id @default(autoincrement())
+  organization    String
+  contactName     String
+  email           String
+  phone           String
+  website         String?
+  partnershipType String?
+  message         String?
+  customFields    Json              @default("{}") // answers to any admin-added extra form fields, keyed by FormField.fieldKey
+  status          ApplicationStatus @default(NEW)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model InternshipApplication {
+  id             Int               @id @default(autoincrement())
+  fullName       String
+  email          String
+  phone          String
+  city           String?
+  education      String?
+  areaOfInterest String?
+  availability   String?
+  message        String?
+  customFields   Json              @default("{}") // answers to any admin-added extra form fields, keyed by FormField.fieldKey
+  status         ApplicationStatus @default(NEW)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// CV Building requests (status is a plain String, not an enum — deliberately
+// separate from ApplicationStatus; values used by the admin UI: PENDING,
+// IN_PROGRESS, COMPLETED, REJECTED)
+// Contact replies / feedback form submissions (status is a plain String, not an
+// enum — values used by the admin UI: NEW, READ, REPLIED)
+model Reply {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String
+  phone     String?
+  subject   String?
+  message   String
+  status    String   @default("NEW")
+  adminNote String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Generic admin-editable key/value config, replacing the old lib/db SiteSettings
+// shape (foundationName/facebook/instagram/.../seoTitle/seoDescription) — the
+// backend's own SiteSettings model is a different, unrelated resource (donation
+// tip/preset amounts, trust registration numbers) and is left untouched.
+model SiteConfig {
+  key       String   @id
+  value     String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// Standalone site updates/announcements shown on the public site, replacing the
+// old lib/db Update model. Named SiteUpdate (not Update) because the backend
+// already has an unrelated Update model with an incompatible shape (category,
+// coverImage required, no shortDescription/featuredImage/sortOrder) — that model
+// is left untouched. title/slug added beyond the brief's field list because
+// app/admin/updates/page.tsx requires both (form fields, search, /updates/:slug
+// routing) and the model can't work without them.
+model SiteUpdate {
+  id               Int       @id @default(autoincrement())
+  title            String
+  slug             String    @unique
+  shortDescription String
+  content          String
+  featuredImage    String?
+  publishedAt      DateTime?
+  isActive         Boolean   @default(true)
+  sortOrder        Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@index([slug])
+}
+
+model CVRequest {
+  id                     Int      @id @default(autoincrement())
+  name                   String
+  email                  String
+  phone                  String?
+  education              String?
+  currentRole            String?
+  experience             String?
+  skills                 String?
+  careerObjective        String?
+  cvType                 String?
+  additionalRequirements String?
+  existingCvUrl          String?
+  customFields           Json     @default("{}") // answers to any admin-added extra form fields, keyed by FormField.fieldKey
+  status                 String   @default("PENDING")
+  adminNotes             String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model FAQ {
+  id        Int      @id @default(autoincrement())
+  question  String
+  answer    String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+// Admin-managed form fields for the Partner/Internship/CV Building public
+// forms — lets an admin add, edit, delete, and reorder fields without a code
+// deploy. The 3-4 core fields each form needs (name, email, phone...) stay as
+// real columns on the submission models for contactability; anything beyond
+// that is captured in that model's `customFields` JSON, keyed by `fieldKey`.
+model FormField {
+  id          Int       @id @default(autoincrement())
+  formType    FormType
+  label       String
+  fieldKey    String // JSON key used in the submission's customFields, e.g. "preferredCity"
+  fieldType   FieldType @default(TEXT)
+  placeholder String?
+  required    Boolean   @default(false)
+  options     Json? // string[] — choices for SELECT fields
+  order       Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([formType, isActive, order])
+}
+
+enum FormType {
+  PARTNER
+  INTERNSHIP
+  CV_BUILDING
+}
+
+enum FieldType {
+  TEXT
+  EMAIL
+  PHONE
+  TEXTAREA
+  SELECT
+  NUMBER
+}
+
+enum ApplicationStatus {
+  NEW
+  REVIEWING
+  CONTACTED
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+enum MessageStatus {
+  NEW
+  CONTACTED
+  CLOSED
+}
+
+// Policy Pages
+model PolicyPage {
+  id        Int        @id @default(autoincrement())
+  type      PolicyType @unique
+  content   String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+enum PolicyType {
+  PRIVACY
+  TERMS
+  REFUND
+}
+
+// Blog
+model Blog {
+  id          Int      @id @default(autoincrement())
+  title       String
+  slug        String   @unique
+  category    String
+  coverImage  String
+  content     String
+  publishedAt DateTime @default(now())
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  media       Media[]
+
+  @@index([isActive])
+  @@index([slug])
+  @@index([category])
+}
+
+// Camp Locations (per-initiative field presence/events)
+model CampLocation {
+  id           Int        @id @default(autoincrement())
+  initiativeId Int
+  initiative   Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  name         String
+  address      String
+  city         String?
+  state        String?
+  latitude     Float?
+  longitude    Float?
+  campDate     DateTime?
+  description  String?
+  order        Int        @default(0)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  media        Media[]
+
+  @@index([initiativeId])
+  @@index([isActive, order])
+}
+
+// Media (uploaded files attached to a Blog post or CampLocation)
+model Media {
+  id             Int           @id @default(autoincrement())
+  type           MediaType
+  storagePath    String
+  url            String?
+  mimeType       String?
+  sizeBytes      Int?
+  title          String?
+  caption        String?
+  order          Int           @default(0)
+  blogId         Int?
+  blog           Blog?         @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  campLocationId Int?
+  campLocation   CampLocation? @relation(fields: [campLocationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([blogId])
+  @@index([campLocationId])
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
