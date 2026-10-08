@@ -84,6 +84,39 @@ MAX_FILE_SIZE=5242880
 3. Generate an App Password for "Mail"
 4. Use that 16-character password as `SMTP_PASS`
 
+## Project Structure
+
+```
+backend/
+├── prisma/
+│   └── schema.prisma          # Database schema (every table/model)
+├── src/
+│   ├── index.ts                # App entry point, Express setup
+│   ├── lib/prisma.ts           # Shared database client (single pooled connection)
+│   ├── middleware/
+│   │   ├── requireAdmin.ts     # JWT auth check for admin-only routes
+│   │   └── rateLimiter.ts      # Rate limiting
+│   ├── routes/                 # One file per feature area — auth, campaigns,
+│   │                           # initiatives, donations, blog, updates, gallery,
+│   │                           # team, testimonials, faqs, formFields, footerLinks,
+│   │                           # quotes, coreValues, presenceLocations, heroSlides,
+│   │                           # partnerApplications, internships, volunteers,
+│   │                           # cvRequests, contact, media, policies, siteConfig,
+│   │                           # settings, seo, campaignCategories, campLocations,
+│   │                           # impact, partners, replies, siteUpdates
+│   ├── services/
+│   │   ├── auth.ts             # Login/JWT logic
+│   │   ├── payment.ts          # Razorpay integration
+│   │   ├── email.ts            # Transactional emails (SMTP)
+│   │   └── receipt.ts          # Donation receipt generation
+│   ├── types/validation.ts     # Zod schemas for every API input
+│   └── utils/asyncHandler.ts   # Error-handling wrapper for routes
+├── package.json
+├── tsconfig.json
+├── .env.example                # Template of required env vars (no real secrets)
+└── .gitignore
+```
+
 ## API Routes
 
 All routes are prefixed with `/api`. 🔒 = requires `requireAdmin` (a valid `admin_token` JWT, or the dormant `x-internal-api-key` header).
