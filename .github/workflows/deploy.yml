@@ -1,0 +1,231 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          envs: DEPLOY_SHA
+          script: |
+            set -e
+            ROOT=/var/www/win-foundations
+            APP=backend
+            REPO_URL=https://github.com/Ashwin1819/win-foundations-backend.git
+            BRANCH=main
+            PM2_NAME=win-backend
+            HEALTH_URL=http://127.0.0.1:3000/health
+
+            # This workflow only knows how to deploy onto the release-based
+            # layout ($ROOT/$APP as a symlink into $ROOT/${APP}-releases/<id>,
+            # with $ROOT/${APP}-shared/ holding the persistent .env and
+            # uploads/). The one-time, manual VPS-side bootstrap to this
+            # layout has been completed. This guard remains as a safety
+            # check in case the live path is ever reverted to a plain
+            # directory by some other means.
+            if [ ! -L "$ROOT/$APP" ]; then
+              echo "ABORT: $ROOT/$APP is not a symlink."
+              echo "The server has not been bootstrapped to the release-based layout yet."
+              echo "No changes made. Manual bootstrap required before this workflow can run."
+              exit 1
+            fi
+            if [ ! -d "$ROOT/${APP}-shared" ]; then
+              echo "ABORT: $ROOT/${APP}-shared does not exist (expected to hold .env and uploads/)."
+              exit 1
+            fi
+            if [ ! -f "$ROOT/${APP}-shared/.env" ]; then
+              echo "ABORT: $ROOT/${APP}-shared/.env not found. Refusing to deploy without a known-good shared .env."
+              exit 1
+            fi
+
+            PREV_REL=$(readlink -f "$ROOT/$APP")
+            echo "Current live release: $PREV_REL"
+
+            if [ -z "$DEPLOY_SHA" ]; then
+              echo "ABORT: DEPLOY_SHA was not forwarded into this remote session — cannot determine the exact commit to deploy."
+              exit 1
+            fi
+
+            REL_ID=$(date +%Y%m%d%H%M%S)_${DEPLOY_SHA:0:7}
+            NEW_REL="$ROOT/${APP}-releases/$REL_ID"
+
+            # Fetch and check out the EXACT commit the test job just
+            # validated, not just whatever is currently at the tip of
+            # $BRANCH — a push landing between this workflow's trigger and
+            # this step running could otherwise deploy untested code.
+            echo "Fetching exact commit $DEPLOY_SHA (branch $BRANCH) into new release directory: $NEW_REL"
+            mkdir -p "$NEW_REL"
+            git -C "$NEW_REL" init -q
+            git -C "$NEW_REL" remote add origin "$REPO_URL"
+            git -C "$NEW_REL" fetch --depth 1 origin "$DEPLOY_SHA"
+            git -C "$NEW_REL" checkout -q FETCH_HEAD
+
+            # Shared, persistent files — never copied, never regenerated.
+            ln -s "$ROOT/${APP}-shared/.env" "$NEW_REL/.env"
+            if [ -d "$ROOT/${APP}-shared/uploads" ]; then
+              ln -s "$ROOT/${APP}-shared/uploads" "$NEW_REL/uploads"
+            else
+              echo "ABORT: $ROOT/${APP}-shared/uploads not found. Refusing to deploy without the existing uploads directory."
+              exit 1
+            fi
+
+            cd "$NEW_REL"
+            npm ci
+
+            # No Prisma migration or database-changing command of any kind.
+            # The production database currently has no committed migration
+            # history; schema changes remain a manual, outside-CI process.
+            npx prisma generate
+
+            npm run build
+
+            echo "Switching live release: $PREV_REL -> $NEW_REL"
+            set +e
+            ln -sfn "$NEW_REL" "$ROOT/${APP}_tmp" && mv -Tf "$ROOT/${APP}_tmp" "$ROOT/$APP"
+            SWITCH_STATUS=$?
+            set -e
+
+            if [ "$SWITCH_STATUS" -ne 0 ]; then
+              echo "ORIGINAL DEPLOY FAILURE: switching the live symlink failed (exit $SWITCH_STATUS)."
+              # Clean up only the temporary symlink — the live app path was
+              # never touched by this failure, so there is nothing to
+              # restore and no rollback is needed.
+              rm -f "$ROOT/${APP}_tmp"
+              echo "Live app was NOT modified (still pointing at: $PREV_REL). New release left at: $NEW_REL for inspection."
+              exit 1
+            fi
+
+            # Scoped restart only — never touch other PM2 processes
+            # (in particular, never run an unscoped `pm2 restart all`,
+            # which would also restart the unrelated infloria-api process).
+            # Captured explicitly rather than left to `set -e`: a failure
+            # here must enter the same rollback path as a failed health
+            # check below, not silently kill the script with the live
+            # symlink already pointed at the new, unverified release.
+            set +e
+            pm2 restart "$PM2_NAME"
+            RESTART_STATUS=$?
+            set -e
+
+            HEALTH_OK=0
+            if [ "$RESTART_STATUS" -ne 0 ]; then
+              echo "Initial pm2 restart failed (exit $RESTART_STATUS) — treating this as a failed deploy and entering rollback."
+            else
+              echo "Waiting for backend to come up..."
+              sleep 5
+
+              for i in 1 2 3 4 5; do
+                if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null; then
+                  HEALTH_OK=1
+                  break
+                fi
+                sleep 3
+              done
+            fi
+
+            if [ "$HEALTH_OK" -ne 1 ]; then
+              echo "ORIGINAL DEPLOY FAILURE: health check against $HEALTH_URL did not pass after restart."
+              echo "Rolling back live release to previous: $PREV_REL"
+
+              # Each rollback step is captured and reported separately
+              # (rather than one `&&`-chained command) so a failure clearly
+              # states WHICH step failed — restoring the symlink, or
+              # restarting PM2 after a successful restore — and so
+              # $ROOT/${APP}_tmp can be cleaned up without ever touching
+              # $ROOT/$APP, the real live path.
+              set +e
+              ln -sfn "$PREV_REL" "$ROOT/${APP}_tmp"
+              ROLLBACK_LINK_STATUS=$?
+              set -e
+
+              if [ "$ROLLBACK_LINK_STATUS" -ne 0 ]; then
+                echo "ROLLBACK FAILED: could not create the temporary symlink for the previous release (exit $ROLLBACK_LINK_STATUS)."
+                echo "ORIGINAL DEPLOY FAILURE was: health check against $HEALTH_URL did not pass after restart (see above)."
+                echo "The live app ($ROOT/$APP) was NOT modified by this step. Previous release was NOT restored."
+                echo "Manual intervention required immediately — app may be in a BROKEN state. Failed new release left at: $NEW_REL"
+                rm -f "$ROOT/${APP}_tmp"
+                exit 1
+              fi
+
+              set +e
+              mv -Tf "$ROOT/${APP}_tmp" "$ROOT/$APP"
+              ROLLBACK_MOVE_STATUS=$?
+              set -e
+
+              if [ "$ROLLBACK_MOVE_STATUS" -ne 0 ]; then
+                echo "ROLLBACK FAILED: could not switch the live symlink to the previous release (exit $ROLLBACK_MOVE_STATUS)."
+                echo "ORIGINAL DEPLOY FAILURE was: health check against $HEALTH_URL did not pass after restart (see above)."
+                echo "The live app ($ROOT/$APP) was NOT modified by this failed step. Previous release was NOT restored."
+                echo "Manual intervention required immediately — app may be in a BROKEN state. Failed new release left at: $NEW_REL"
+                rm -f "$ROOT/${APP}_tmp"
+                exit 1
+              fi
+
+              # Symlink restore confirmed complete — $ROOT/$APP now points
+              # at $PREV_REL. Only now attempt to restart PM2.
+              set +e
+              pm2 restart "$PM2_NAME"
+              ROLLBACK_RESTART_STATUS=$?
+              set -e
+
+              if [ "$ROLLBACK_RESTART_STATUS" -ne 0 ]; then
+                echo "ROLLBACK PARTIALLY FAILED: the previous release's symlink was restored successfully, but pm2 restart failed (exit $ROLLBACK_RESTART_STATUS)."
+                echo "ORIGINAL DEPLOY FAILURE was: health check against $HEALTH_URL did not pass after restart (see above)."
+                echo "$ROOT/$APP now points at the previous release ($PREV_REL), but the running process may not have picked it up."
+                echo "Manual intervention required immediately — app may be in a BROKEN state."
+                exit 1
+              fi
+
+              sleep 5
+              ROLLBACK_HEALTH_OK=0
+              for i in 1 2 3; do
+                if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null; then
+                  ROLLBACK_HEALTH_OK=1
+                  break
+                fi
+                sleep 3
+              done
+
+              if [ "$ROLLBACK_HEALTH_OK" -ne 1 ]; then
+                echo "ROLLBACK SWITCH SUCCEEDED but previous release ALSO fails health check — app may be in a BROKEN state."
+                echo "ORIGINAL DEPLOY FAILURE was: health check against $HEALTH_URL did not pass after restart (see above)."
+                echo "Manual intervention required immediately. Failed new release left at: $NEW_REL"
+                exit 1
+              fi
+
+              echo "Rollback succeeded — previous release ($PREV_REL) is live and healthy again."
+              echo "(Original deploy is still reported as FAILED — see failure above. Failed new release left at: $NEW_REL for inspection.)"
+              exit 1
+            fi
+
+            echo "Health check passed. Deploy succeeded."
+            echo "New release live: $REL_ID"
+            echo "Previous release retained (not deleted): $PREV_REL"
