@@ -13,6 +13,7 @@ import {
   createCampaignUpdateSchema,
   updateCampaignUpdateSchema,
   createCampaignPhotoSchema,
+  createCampaignPhotoFromUrlSchema,
   createCampaignVideoSchema,
   updateCampaignVideoSchema,
 } from '../types/validation';
@@ -182,6 +183,31 @@ router.post('/:id/photos', requireAdmin, uploadPhoto.single('file'), asyncHandle
     data: {
       campaignId,
       image: `/uploads/${file.filename}`,
+      caption: data.caption,
+      order: data.order ?? 0,
+    }
+  });
+
+  res.status(201).json(photo);
+}));
+
+// POST /api/campaigns/:id/photos/url — admin only, JSON body { image, caption?, order? }.
+// For photos already hosted externally (Supabase Storage, uploaded directly from the
+// browser) rather than a file passed through this server.
+router.post('/:id/photos/url', requireAdmin, asyncHandler(async (req: Request, res: Response) => {
+  const campaignId = parseInt(req.params.id);
+
+  const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+  if (!campaign) {
+    return res.status(400).json({ error: 'Campaign not found' });
+  }
+
+  const data = createCampaignPhotoFromUrlSchema.parse(req.body);
+
+  const photo = await prisma.campaignPhoto.create({
+    data: {
+      campaignId,
+      image: data.image,
       caption: data.caption,
       order: data.order ?? 0,
     }

@@ -445,6 +445,15 @@ export const createCampaignPhotoSchema = z.object({
   order: z.number().int().optional(),
 });
 
+// For a photo whose file already lives externally (e.g. Supabase Storage,
+// uploaded directly from the browser) rather than one uploaded through this
+// backend's own multipart endpoint above.
+export const createCampaignPhotoFromUrlSchema = z.object({
+  image: z.string().min(1, 'Image URL is required'),
+  caption: z.string().optional(),
+  order: z.number().int().optional(),
+});
+
 export const createCampaignVideoSchema = z.object({
   videoUrl: z.string().min(1, 'Video URL is required'),
   title: z.string().optional(),
